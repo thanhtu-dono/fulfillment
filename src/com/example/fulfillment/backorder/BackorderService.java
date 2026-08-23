@@ -19,15 +19,18 @@ public final class BackorderService implements AutoCloseable {
     private final Clock clock;
     private final double timeScale;
     private final Consumer<Order> processor;
+    private final Consumer<Order> escalationListener;
     private Thread worker;
 
-    public BackorderService(Clock clock, double timeScale, Consumer<Order> processor) {
+    public BackorderService(Clock clock, double timeScale, Consumer<Order> processor,
+                            Consumer<Order> escalationListener) {
         if (timeScale <= 0) {
             throw new IllegalArgumentException("Time scale must be positive");
         }
         this.clock = clock;
         this.timeScale = timeScale;
         this.processor = processor;
+        this.escalationListener = escalationListener;
     }
 
     public void start() {
@@ -65,6 +68,7 @@ public final class BackorderService implements AutoCloseable {
 
     private void run() {
         while (running.get()) {
+            escalateEligible(escalationListener);
             try {
                 Thread.sleep(100);
             } catch (InterruptedException exception) {

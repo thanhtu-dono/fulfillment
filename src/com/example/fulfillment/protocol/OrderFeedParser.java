@@ -13,6 +13,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
@@ -25,7 +26,7 @@ public final class OrderFeedParser {
     private final RejectWriter rejectWriter;
     private final Clock clock;
     private final Consumer<String> warningWriter;
-    private final Set<String> seenOrderIds = new HashSet<>();
+    private final Set<String> seenOrderIds = ConcurrentHashMap.newKeySet();
 
     public OrderFeedParser(Set<Sku> knownSkus, RejectWriter rejectWriter, Clock clock) {
         this(knownSkus, rejectWriter, clock, message -> { });

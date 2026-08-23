@@ -37,6 +37,7 @@ public final class CoreBehaviorTest {
     public static void main(String[] args) throws Exception {
         parserChecks();
         duplicateLineRollbackCheck();
+        partialAndRestockCheck();
         escalationAuditCheck();
         System.out.println("CORE_BEHAVIOR_TEST_PASS");
     }
@@ -85,17 +86,46 @@ public final class CoreBehaviorTest {
         try {
             service.submit(order("ORD-000011", OrderTier.PRIORITY, 11));
             service.submit(order("ORD-000012", OrderTier.STANDARD, 12));
-            Thread.sleep(150);
-            require(service.escalateBackorders() == 1, "one standard order escalated");
+            Thread.sleep(250);
             long count = audit.all().stream().filter(event -> event.type() == AuditEventType.ORDER_ESCALATED).count();
+            require(count == 1, "one standard order escalated");
             require(count == 1, "escalation audit emitted once");
         } finally {
             service.close();
         }
     }
 
+    private static void partialAndRestockCheck() {
+        Sku secondSku = new Sku("SKU-SECOND");
+        Sku waitingSku = new Sku("SKU-WAITING");
+        InventoryRepository inventory = InventoryRepository.fromSeed(Map.of(
+                new InventoryKey(SKU, FulfillmentCenter.FC_EAST), new InventorySeed(1, 10.0),
+            new InventoryKey(secondSku, FulfillmentCenter.FC_EAST), new InventorySeed(1, 20.0),
+            new InventoryKey(waitingSku, FulfillmentCenter.FC_EAST), new InventorySeed(1, 10.0),
+            new InventoryKey(waitingSku, FulfillmentCenter.FC_WEST), new InventorySeed(1, 10.0)));
+        AuditTrail audit = new AuditTrail();
+        OrderFulfillmentService service = new OrderFulfillmentService(inventory, audit, Clock.systemUTC(), 1_000.0);
+        try {
+            Order partial = new Order(new OrderId("ORD-000013"), OrderTier.STANDARD, true,
+                    List.of(new OrderLine(SKU, 1), new OrderLine(secondSku, 2)), Instant.EPOCH, 13);
+            require(service.submit(partial).allocations().size() == 1, "partial line shipped");
+            require(service.deadLetterCount() == 1, "unfulfillable partial line dead-lettered");
+
+            Order waiting = order("ORD-000014", OrderTier.STANDARD, 14, waitingSku);
+            require(service.submit(waiting).status().name().equals("BACKORDERED"), "temporary shortage backordered");
+            service.restock(waitingSku, FulfillmentCenter.FC_EAST, 1);
+            require(service.status(new OrderId("ORD-000014")).name().equals("SHIPPED"), "restock retries order");
+        } finally {
+            service.close();
+        }
+    }
+
     private static Order order(String id, OrderTier tier, long sequence) {
-        return new Order(new OrderId(id), tier, false, List.of(new OrderLine(SKU, 2)),
+        return order(id, tier, sequence, SKU);
+    }
+
+    private static Order order(String id, OrderTier tier, long sequence, Sku sku) {
+        return new Order(new OrderId(id), tier, false, List.of(new OrderLine(sku, 2)),
                 Instant.EPOCH, sequence);
     }
 

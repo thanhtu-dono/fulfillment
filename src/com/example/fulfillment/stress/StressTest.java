@@ -21,6 +21,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 public final class StressTest {
     private static final int THREADS = 8;
@@ -75,12 +77,19 @@ public final class StressTest {
                     .filter(event -> event.type() == AuditEventType.RESERVATION_SUCCEEDED).count();
             boolean noDuplicateReservation = successfulAuditReservations == reserved;
             boolean progress = completed && service.submittedCount() == ORDERS;
+                Set<String> escalationIds = audit.all().stream()
+                    .filter(event -> event.type() == AuditEventType.ORDER_ESCALATED)
+                    .map(event -> event.orderId().value())
+                    .collect(Collectors.toSet());
+                long escalationEvents = audit.all().stream()
+                    .filter(event -> event.type() == AuditEventType.ORDER_ESCALATED).count();
+                boolean escalationExactlyOnce = escalationEvents == escalationIds.size() && !escalationIds.isEmpty();
             System.out.println("STRESS-TEST");
             System.out.println("orders=" + ORDERS + " threads=" + THREADS + " demand=10000 startingStock=100");
             System.out.println("PASS reservedWithinStock=" + (reserved <= 100));
             System.out.println("PASS noDuplicateReservation=" + noDuplicateReservation);
             System.out.println("PASS liveness=" + progress);
-            System.out.println("PASS escalationExactlyOnce=" + (escalations > 0));
+            System.out.println("PASS escalationExactlyOnce=" + escalationExactlyOnce);
             System.out.println("escalations=" + escalations + " reserved=" + reserved
                     + " elapsedMs=" + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
                     + " stockNonNegative=" + nonNegative);

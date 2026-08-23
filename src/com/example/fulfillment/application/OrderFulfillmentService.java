@@ -38,16 +38,24 @@ public final class OrderFulfillmentService implements AutoCloseable {
         this.inventory = inventory;
         this.auditTrail = auditTrail;
         this.clock = clock;
-        this.backorders = new BackorderService(clock, timeScale, this::submit);
+        this.backorders = new BackorderService(clock, timeScale, order -> submitInternal(order, false),
+            order -> audit(order, AuditEventType.ORDER_ESCALATED,
+                "Standard order escalated to priority"));
         this.backorders.start();
     }
 
     public FulfillmentResult submit(Order order) {
+        return submitInternal(order, true);
+    }
+
+    private FulfillmentResult submitInternal(Order order, boolean initialSubmission) {
         if (acceptedOrderIds.add(order.id())) {
             submitted.increment();
         }
-        statuses.put(order.id(), OrderStatus.RECEIVED);
-        audit(order, AuditEventType.ORDER_ACCEPTED, "Order accepted");
+        if (initialSubmission) {
+            statuses.put(order.id(), OrderStatus.RECEIVED);
+            audit(order, AuditEventType.ORDER_ACCEPTED, "Order accepted");
+        }
         ReservationAttempt attempt = inventory.tryReserve(order);
         if (attempt.reserved()) {
             double orderRevenue = attempt.allocations().stream()
@@ -127,10 +135,8 @@ public final class OrderFulfillmentService implements AutoCloseable {
     public double revenue() { return revenue.sum(); }
     public long shippedCount() { return shipped.sum(); }
     public long submittedCount() { return submitted.sum(); }
-    public int escalateBackorders() {
-        return backorders.escalateEligible(order -> audit(order, AuditEventType.ORDER_ESCALATED,
-                "Standard order escalated to priority"));
-    }
+        public int escalateBackorders() { return backorders.escalateEligible(order -> audit(order,
+            AuditEventType.ORDER_ESCALATED, "Standard order escalated to priority")); }
     public OrderStatus status(OrderId orderId) { return statuses.get(orderId); }
 
     private void audit(Order order, AuditEventType type, String message) {

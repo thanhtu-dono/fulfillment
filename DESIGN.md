@@ -239,7 +239,7 @@ Quyết định terminal: dead-letter line item không tự revive sau RESTOCK. 
 
 - Order thiếu stock nhưng còn khả năng fulfill được enqueue với original submission timestamp.
 - RESTOCK phát signal, worker đánh thức và retry queue mà không chặn ingestion.
-- Worker dùng priority queue: `PRIORITY` trước, sau đó original timestamp, rồi sequence number.
+- Daemon worker định kỳ kiểm tra escalation; RESTOCK kích hoạt reprocess queue. Worker dùng priority queue: `PRIORITY` trước, sau đó original timestamp, rồi sequence number.
 - Standard order chờ quá 90 simulated seconds và có priority order đang chờ sẽ escalate.
 - Tie-break escalation: original submission timestamp tăng dần; nếu bằng nhau dùng immutable ingestion sequence tăng dần.
 - Escalation và dequeue được thực hiện trong một lock của backorder service để tránh xử lý hai lần.
@@ -325,7 +325,7 @@ Harness phải:
 
 ### 10.6 Executable regression tests
 
-`CoreBehaviorTest` chạy không cần framework và cover checksum/parser với continuation, reserved flag warning path, duplicate order rejection, unknown SKU rejection, duplicate line atomic rollback và escalation audit exactly once. `DomainSmokeTest` cover value-object validation. Cả hai test có exit code khác 0 khi assertion thất bại.
+`CoreBehaviorTest` chạy không cần framework và cover checksum/parser với continuation, reserved flag warning path, duplicate order rejection, unknown SKU rejection, duplicate line atomic rollback, partial fulfillment, dead-letter, RESTOCK retry và automatic escalation audit exactly once. `DomainSmokeTest` cover value-object validation. Cả hai test có exit code khác 0 khi assertion thất bại.
 
 ## 11. Deliverables sau khi implementation
 
@@ -365,11 +365,12 @@ Kết quả cho thấy reservation không vượt stock, không có duplicate re
 
 ## 15. Known Limitations / What I'd Do With More Time
 
-- Parser hiện đọc logical order tuần tự trước khi phân phối order đã parse cho 4 worker; có thể cải tiến thành pipeline reader/parser worker nhưng vẫn phải giữ thứ tự continuation.
+- Parser hiện phân đoạn logical order tuần tự trước khi phân phối block cho 4 worker; có thể cải tiến thành pipeline reader/parser worker nhưng vẫn phải giữ thứ tự continuation.
 - `REPORT` và audit hiện là in-memory, chưa có persistence hoặc rotation cho log dài hạn.
 - Partial fulfillment hiện quản lý pending line ở mức order retry; chưa có màn hình chi tiết line-level cho console.
 - Có thể bổ sung test runner duy nhất để chạy toàn bộ unit-style checks thay vì gọi từng class test riêng.
 - Có thể thay `double` bằng integer cents để loại bỏ sai số floating-point khi tính revenue.
+- Atomic visibility giữa inventory deduction và status publication hiện được bảo vệ ở application flow, nhưng chưa có một transaction snapshot API cho observer đọc cả hai trong cùng operation; bước tiếp theo là thêm transaction boundary hoặc completion future cho status read.
 
 ## 16. Implementation status
 
