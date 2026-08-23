@@ -107,15 +107,15 @@ public final class CoreBehaviorTest {
         OrderFulfillmentService service = new OrderFulfillmentService(inventory, audit, Clock.systemUTC(), 1_000.0);
         try {
             Order partial = new Order(new OrderId("ORD-000013"), OrderTier.STANDARD, true,
-                    List.of(new OrderLine(SKU, 1), new OrderLine(secondSku, 2)), Instant.EPOCH, 13);
+                    List.of(new OrderLine(SKU, 1), new OrderLine(secondSku, 2),
+                        new OrderLine(waitingSku, 2)), Instant.EPOCH, 13);
             require(service.submit(partial).allocations().size() == 1, "partial line shipped");
             require(service.deadLetterCount() == 1, "unfulfillable partial line dead-lettered");
-
-            Order waiting = order("ORD-000014", OrderTier.STANDARD, 14, waitingSku);
-            require(service.submit(waiting).status().name().equals("BACKORDERED"), "temporary shortage backordered");
+                require(service.shippedCount() == 1, "partial order counted once initially");
             service.restock(waitingSku, FulfillmentCenter.FC_EAST, 1);
             Thread.sleep(150);
-            require(service.status(new OrderId("ORD-000014")).name().equals("SHIPPED"), "restock retries order");
+                require(service.status(new OrderId("ORD-000013")).name().equals("SHIPPED"), "restock retries order");
+                require(service.shippedCount() == 1, "partial retry does not double count shipped");
         } finally {
             service.close();
         }

@@ -4,4 +4,4 @@ PASS reservedWithinStock=true
 PASS noDuplicateReservation=true
 PASS liveness=true
 PASS escalationExactlyOnce=true
-escalations=3550 reserved=49 elapsedMs=2317 stockNonNegative=true
+escalations=3570 reserved=49 elapsedMs=2297 stockNonNegative=true

@@ -371,6 +371,7 @@ Kết quả cho thấy reservation không vượt stock, không có duplicate re
 - Có thể bổ sung test runner duy nhất để chạy toàn bộ unit-style checks thay vì gọi từng class test riêng.
 - Có thể thay `double` bằng integer cents để loại bỏ sai số floating-point khi tính revenue.
 - Status observers chờ completion future theo từng reservation attempt, nên không đọc trạng thái cũ trong lúc inventory operation đang hoàn tất; inventory vẫn dùng fine-grained locks thay vì global lock.
+- `shipped` được deduplicate theo `OrderId`, nên partial order retry không làm success rate tăng nhiều lần; revenue vẫn cộng theo allocation thực tế.
 
 ## 16. Implementation status
 

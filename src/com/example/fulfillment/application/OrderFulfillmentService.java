@@ -30,6 +30,7 @@ public final class OrderFulfillmentService implements AutoCloseable {
     private final Map<OrderId, OrderStatus> statuses = new ConcurrentHashMap<>();
     private final Map<OrderId, CompletableFuture<OrderStatus>> statusCompletion = new ConcurrentHashMap<>();
     private final java.util.Set<OrderId> acceptedOrderIds = ConcurrentHashMap.newKeySet();
+    private final java.util.Set<OrderId> shippedOrderIds = ConcurrentHashMap.newKeySet();
     private final DoubleAdder revenue = new DoubleAdder();
     private final LongAdder shipped = new LongAdder();
     private final LongAdder submitted = new LongAdder();
@@ -65,7 +66,7 @@ public final class OrderFulfillmentService implements AutoCloseable {
             double orderRevenue = attempt.allocations().stream()
                     .mapToDouble(allocation -> allocation.line().quantity() * allocation.unitPrice()).sum();
             revenue.add(orderRevenue);
-            shipped.increment();
+            recordShipped(order.id());
             finishStatus(order.id(), OrderStatus.SHIPPED);
             audit(order, AuditEventType.RESERVATION_SUCCEEDED, "Reservation succeeded");
             audit(order, AuditEventType.ORDER_SHIPPED, "Order shipped");
@@ -117,7 +118,7 @@ public final class OrderFulfillmentService implements AutoCloseable {
             finishStatus(order.id(), allocations.isEmpty() ? OrderStatus.DEAD_LETTERED : OrderStatus.SHIPPED);
         }
         if (!allocations.isEmpty()) {
-            shipped.increment();
+            recordShipped(order.id());
             audit(order, AuditEventType.ORDER_SHIPPED, "Partial order shipped");
         }
         return new FulfillmentResult(statuses.get(order.id()), allocations, pending, dead);
@@ -153,6 +154,12 @@ public final class OrderFulfillmentService implements AutoCloseable {
         CompletableFuture<OrderStatus> completion = statusCompletion.get(orderId);
         if (completion != null) {
             completion.complete(status);
+        }
+    }
+
+    private void recordShipped(OrderId orderId) {
+        if (shippedOrderIds.add(orderId)) {
+            shipped.increment();
         }
     }
 
