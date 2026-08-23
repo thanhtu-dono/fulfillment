@@ -10,6 +10,7 @@ import com.example.fulfillment.protocol.InventorySeedReader;
 import com.example.fulfillment.protocol.OrderFeedParser;
 import com.example.fulfillment.protocol.ParsedOrder;
 import com.example.fulfillment.protocol.RejectWriter;
+import com.example.fulfillment.stress.StressTest;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -19,6 +20,7 @@ import java.util.Scanner;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public final class Main {
     private Main() {
@@ -43,10 +45,12 @@ public final class Main {
             for (ParsedOrder parsedOrder : parsedOrders) {
                 ingestionWorkers.submit(() -> service.submit(parsedOrder.order()));
             }
-            ingestionWorkers.shutdown();
-
             runConsole(service);
-            ingestionWorkers.shutdownNow();
+            ingestionWorkers.shutdown();
+            if (!ingestionWorkers.awaitTermination(10, TimeUnit.SECONDS)) {
+                ingestionWorkers.shutdownNow();
+                ingestionWorkers.awaitTermination(2, TimeUnit.SECONDS);
+            }
         }
     }
 
@@ -64,7 +68,7 @@ public final class Main {
                         case "REPORT" -> printReport(service);
                         case "RESTOCK" -> restock(service, tokens);
                         case "AUDIT" -> audit(service, tokens);
-                        case "STRESS-TEST" -> System.out.println("Stress test is scheduled for the next implementation step.");
+                        case "STRESS-TEST" -> runStressTest();
                         case "EXIT" -> { printReport(service); return; }
                         default -> System.out.println("Unknown command");
                     }
@@ -103,5 +107,14 @@ public final class Main {
             throw new IllegalArgumentException("Usage: AUDIT <ORDER_ID>");
         }
         service.auditTrail().forOrder(new OrderId(tokens[1])).forEach(System.out::println);
+    }
+
+    private static void runStressTest() {
+        try {
+            StressTest.main(new String[0]);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            System.out.println("Stress test interrupted");
+        }
     }
 }

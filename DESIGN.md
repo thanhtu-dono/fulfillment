@@ -347,3 +347,27 @@ Harness phải:
 8. Viết test harness nhỏ theo từng module.
 9. Viết stress test và chạy nhiều lần.
 10. Chốt documentation, captured output và kiểm tra deliverables.
+
+## 13. Bug I Found and Fixed
+
+Trong lần chạy stress test đầu tiên, bộ đếm `submitted` tính cả các lần order được retry từ backorder queue. Vì vậy watchdog báo liveness thất bại dù toàn bộ producer thread đã hoàn tất. Nguyên nhân là metric submission được tăng ở mọi lần gọi `submit`, thay vì chỉ tăng lần đầu cho mỗi `OrderId`. Tôi đã sửa bằng một thread-safe set `acceptedOrderIds`, chỉ ghi nhận order đầu tiên; sau đó chạy lại stress test và liveness chuyển sang `PASS`.
+
+## 14. Stress test result và phân tích
+
+Output thực tế được lưu tại `STRESS_TEST_OUTPUT.txt`. Lần chạy đã dùng 8 threads, 5.000 orders, tổng demand 10.000 units trên starting stock 100 units và time-scale 1:1000.
+
+Kết quả cho thấy reservation không vượt stock, không có duplicate reservation, không có stock âm và tất cả producer thread đều tiến triển. Kịch bản stock bị phân tán giữa các center đã tạo backorder có priority đang chờ, từ đó kích hoạt 4.899 standard-to-priority escalations. Số reservation thành công là 49 orders, tương đương 98 units; phần còn lại không được ship vì không có một center nào đủ 2 units hoặc đã vượt company capacity. Harness in `PASS` cho các invariant chính.
+
+## 15. Known Limitations / What I'd Do With More Time
+
+- Parser hiện đọc logical order tuần tự trước khi phân phối order đã parse cho 4 worker; có thể cải tiến thành pipeline reader/parser worker nhưng vẫn phải giữ thứ tự continuation.
+- `REPORT` và audit hiện là in-memory, chưa có persistence hoặc rotation cho log dài hạn.
+- Partial fulfillment hiện quản lý pending line ở mức order retry; chưa có màn hình chi tiết line-level cho console.
+- Có thể bổ sung test runner duy nhất để chạy toàn bộ unit-style checks thay vì gọi từng class test riêng.
+- Có thể thay `double` bằng integer cents để loại bỏ sai số floating-point khi tính revenue.
+
+## 16. Implementation status
+
+- Đã hoàn thành domain, parser, inventory locking, atomic reservation, rollback, backorder, RESTOCK, escalation, dead-letter, audit, sample data và stress harness.
+- Console đã hỗ trợ `STATUS`, `REPORT`, `RESTOCK`, `AUDIT`, `STRESS-TEST` và `EXIT` graceful với thời gian chờ ingestion worker.
+- PDF đề bài chỉ nằm ở local và được loại khỏi Git bằng `.gitignore`.
