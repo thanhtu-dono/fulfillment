@@ -10,7 +10,7 @@ import com.example.fulfillment.protocol.InventorySeedReader.InventorySeed;
 
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashSet;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,13 +31,13 @@ public final class InMemoryInventoryRepository implements InventoryRepository {
 
     @Override
     public ReservationAttempt tryReserve(Order order) {
-        Map<OrderLine, InventoryKey> selected = selectCenters(order.lines());
+        List<AllocationPlan> selected = selectCenters(order.lines());
         if (selected == null) {
             return ReservationAttempt.failed();
         }
 
-        List<InventoryKey> keys = selected.values().stream()
-                .distinct()
+        List<InventoryKey> keys = selected.stream().map(AllocationPlan::key)
+            .distinct()
                 .sorted(Comparator.naturalOrder())
                 .toList();
         List<ReentrantLock> acquired = new ArrayList<>();
@@ -50,16 +50,20 @@ public final class InMemoryInventoryRepository implements InventoryRepository {
                 lock.lock();
                 acquired.add(lock);
             }
-            for (Map.Entry<OrderLine, InventoryKey> entry : selected.entrySet()) {
-                if (stockByKey.get(entry.getValue()).quantity < entry.getKey().quantity()) {
+            Map<InventoryKey, Integer> demandByKey = new HashMap<>();
+            for (AllocationPlan plan : selected) {
+                demandByKey.merge(plan.key(), plan.line().quantity(), Math::addExact);
+            }
+            for (Map.Entry<InventoryKey, Integer> demand : demandByKey.entrySet()) {
+                if (stockByKey.get(demand.getKey()).quantity < demand.getValue()) {
                     return ReservationAttempt.failed();
                 }
             }
             List<ReservationAllocation> allocations = new ArrayList<>();
-            for (Map.Entry<OrderLine, InventoryKey> entry : selected.entrySet()) {
-                Stock stock = stockByKey.get(entry.getValue());
-                stock.quantity -= entry.getKey().quantity();
-                allocations.add(new ReservationAllocation(entry.getKey(), entry.getValue().center(), stock.unitPrice));
+            for (AllocationPlan plan : selected) {
+                Stock stock = stockByKey.get(plan.key());
+                stock.quantity -= plan.line().quantity();
+                allocations.add(new ReservationAllocation(plan.line(), plan.key().center(), stock.unitPrice));
             }
             return new ReservationAttempt(true, allocations);
         } finally {
@@ -69,8 +73,8 @@ public final class InMemoryInventoryRepository implements InventoryRepository {
         }
     }
 
-    private Map<OrderLine, InventoryKey> selectCenters(List<OrderLine> lines) {
-        Map<OrderLine, InventoryKey> selected = new LinkedHashMap<>();
+    private List<AllocationPlan> selectCenters(List<OrderLine> lines) {
+        List<AllocationPlan> selected = new ArrayList<>();
         for (OrderLine line : lines) {
             InventoryKey candidate = stockByKey.keySet().stream()
                     .filter(key -> key.sku().equals(line.sku()))
@@ -81,9 +85,12 @@ public final class InMemoryInventoryRepository implements InventoryRepository {
             if (candidate == null) {
                 return null;
             }
-            selected.put(line, candidate);
+            selected.add(new AllocationPlan(line, candidate));
         }
         return selected;
+    }
+
+    private record AllocationPlan(OrderLine line, InventoryKey key) {
     }
 
     @Override

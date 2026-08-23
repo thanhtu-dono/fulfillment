@@ -39,7 +39,8 @@ public final class Main {
             Set<Sku> knownSkus = seed.keySet().stream().map(key -> key.sku()).collect(java.util.stream.Collectors.toSet());
             OrderFeedParser parser = new OrderFeedParser(knownSkus, rejectWriter, Clock.systemUTC());
             List<ParsedOrder> parsedOrders = new java.util.ArrayList<>();
-            parser.parse(Files.readAllLines(workingDirectory.resolve("order_feed.txt")), parsedOrders::add);
+                parser.parseConcurrently(Files.readAllLines(workingDirectory.resolve("order_feed.txt")), 4,
+                    parsedOrders::add);
 
             ExecutorService ingestionWorkers = Executors.newFixedThreadPool(4);
             for (ParsedOrder parsedOrder : parsedOrders) {

@@ -127,7 +127,10 @@ public final class OrderFulfillmentService implements AutoCloseable {
     public double revenue() { return revenue.sum(); }
     public long shippedCount() { return shipped.sum(); }
     public long submittedCount() { return submitted.sum(); }
-    public int escalateBackorders() { return backorders.escalateEligible(); }
+    public int escalateBackorders() {
+        return backorders.escalateEligible(order -> audit(order, AuditEventType.ORDER_ESCALATED,
+                "Standard order escalated to priority"));
+    }
     public OrderStatus status(OrderId orderId) { return statuses.get(orderId); }
 
     private void audit(Order order, AuditEventType type, String message) {

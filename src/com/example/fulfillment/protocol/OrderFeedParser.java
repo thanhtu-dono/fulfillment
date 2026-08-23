@@ -12,6 +12,9 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -22,7 +25,6 @@ public final class OrderFeedParser {
     private final RejectWriter rejectWriter;
     private final Clock clock;
     private final Set<String> seenOrderIds = new HashSet<>();
-    private long sequence;
 
     public OrderFeedParser(Set<Sku> knownSkus, RejectWriter rejectWriter, Clock clock) {
         this.knownSkus = Set.copyOf(knownSkus);
@@ -31,38 +33,99 @@ public final class OrderFeedParser {
     }
 
     public void parse(List<String> lines, Consumer<ParsedOrder> consumer) throws Exception {
-        OrderBuilder current = null;
+        List<List<String>> blocks = logicalBlocks(lines);
+        for (int index = 0; index < blocks.size(); index++) {
+            ParsedOrder parsed = parseBlock(blocks.get(index), index);
+            if (parsed != null) {
+                consumer.accept(parsed);
+            }
+        }
+    }
+
+    public void parseConcurrently(List<String> lines, int workerCount,
+                                  Consumer<ParsedOrder> consumer) throws Exception {
+        if (workerCount < 1) {
+            throw new IllegalArgumentException("Worker count must be positive");
+        }
+        List<List<String>> blocks = logicalBlocks(lines);
+        ExecutorService workers = Executors.newFixedThreadPool(workerCount);
+        try {
+            List<Callable<ParsedOrder>> tasks = new ArrayList<>();
+            for (int index = 0; index < blocks.size(); index++) {
+                int sequence = index;
+                tasks.add(() -> parseBlock(blocks.get(sequence), sequence));
+            }
+            for (var future : workers.invokeAll(tasks)) {
+                ParsedOrder parsed = future.get();
+                if (parsed != null) {
+                    consumer.accept(parsed);
+                }
+            }
+        } finally {
+            workers.shutdown();
+        }
+    }
+
+    private List<List<String>> logicalBlocks(List<String> lines) throws Exception {
+        List<List<String>> blocks = new ArrayList<>();
+        Set<String> structuralOrderIds = new HashSet<>();
+        List<String> current = null;
         for (String line : lines) {
             if (line.startsWith("O|")) {
                 if (current != null) {
-                    consumer.accept(current.build());
+                    blocks.add(current);
                 }
-                current = parseHeader(line);
+                String[] fields = line.split("\\|", -1);
+                if (fields.length > 1 && fields[1].matches("ORD-[0-9]{6}")
+                        && !structuralOrderIds.add(fields[1])) {
+                    reject(line, RejectReason.DUPLICATE_ORDER_ID);
+                    current = null;
+                    continue;
+                }
+                current = new ArrayList<>();
+                current.add(line);
             } else if (line.startsWith("C|")) {
                 if (current == null) {
                     reject(line, RejectReason.ORPHAN_CONTINUATION);
                     continue;
                 }
-                if (!Checksum.matches(line)) {
-                    reject(line, RejectReason.CHECKSUM_MISMATCH);
-                    continue;
-                }
-                String[] fields = line.split("\\|", -1);
-                if (fields.length != 4 || !fields[1].equals(current.id.value())) {
-                    reject(line, RejectReason.ORPHAN_CONTINUATION);
-                    continue;
-                }
-                List<OrderLine> continuation = parseItems(line, fields[2]);
-                if (continuation != null) {
-                    current.lines.addAll(continuation);
-                }
+                current.add(line);
             } else {
                 reject(line, RejectReason.MALFORMED_FIELD);
             }
         }
         if (current != null) {
-            consumer.accept(current.build());
+            blocks.add(current);
         }
+        return blocks;
+    }
+
+    private ParsedOrder parseBlock(List<String> block, long sequence) throws Exception {
+        OrderBuilder current = parseHeader(block.get(0));
+        if (current == null) {
+            return null;
+        }
+        for (int index = 1; index < block.size(); index++) {
+            String line = block.get(index);
+            if (!Checksum.matches(line)) {
+                reject(line, RejectReason.CHECKSUM_MISMATCH);
+                continue;
+            }
+            String[] fields = line.split("\\|", -1);
+            if (fields.length != 4 || !fields[1].equals(current.id.value())) {
+                reject(line, RejectReason.ORPHAN_CONTINUATION);
+                continue;
+            }
+            List<OrderLine> continuation = parseItems(line, fields[2]);
+            if (continuation != null) {
+                if (continuation.size() > 6) {
+                    reject(line, RejectReason.MALFORMED_LINE_ITEM);
+                } else {
+                    current.lines.addAll(continuation);
+                }
+            }
+        }
+        return current.build(sequence);
     }
 
     private OrderBuilder parseHeader(String line) throws Exception {
@@ -140,8 +203,8 @@ public final class OrderFeedParser {
             this.lines = new ArrayList<>(lines);
         }
 
-        private ParsedOrder build() {
-            return new ParsedOrder(new Order(id, tier, partialAllowed, lines, Instant.now(clock), sequence++));
+        private ParsedOrder build(long sequence) {
+            return new ParsedOrder(new Order(id, tier, partialAllowed, lines, Instant.now(clock), sequence));
         }
     }
 }

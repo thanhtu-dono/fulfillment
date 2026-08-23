@@ -65,7 +65,6 @@ public final class BackorderService implements AutoCloseable {
 
     private void run() {
         while (running.get()) {
-            processNow();
             try {
                 Thread.sleep(100);
             } catch (InterruptedException exception) {
@@ -81,7 +80,7 @@ public final class BackorderService implements AutoCloseable {
                 .thenComparingLong(BackorderEntry::sequence);
     }
 
-    public int escalateEligible() {
+    public int escalateEligible(Consumer<Order> escalationListener) {
         Instant now = Instant.now(clock);
         boolean hasPriority = queue.stream().anyMatch(entry -> entry.order().tier() == OrderTier.PRIORITY);
         if (!hasPriority) {
@@ -97,6 +96,7 @@ public final class BackorderService implements AutoCloseable {
                 queue.offer(new BackorderEntry(new Order(order.id(), OrderTier.PRIORITY,
                         order.partialAllowed(), order.lines(), order.submittedAt(), order.ingestionSequence()),
                         entry.enqueuedAt(), entry.sequence()));
+                escalationListener.accept(order);
                 escalated++;
             }
         }

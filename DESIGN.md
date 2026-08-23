@@ -207,7 +207,7 @@ AuditTrail.append(AuditEvent event)
 9. Duplicate header order id bị reject; continuation không có header tương ứng bị reject.
 10. Khi order hoàn tất, gửi vào application service để reservation.
 
-Việc phân phối line cho worker phải giữ được ngữ nghĩa continuation. Có thể đọc feed thành các logical order records trước, sau đó phân phối các order records theo batch; phần parse/validation của từng record vẫn chạy đồng thời.
+Việc phân phối line cho worker phải giữ được ngữ nghĩa continuation. Implementation phân đoạn feed thành logical order blocks tuần tự, sau đó parse các block bằng 4 worker; vì một block luôn chứa header và các continuation liên quan nên thứ tự protocol được bảo toàn trong khi parsing các order độc lập chạy đồng thời.
 
 ### 9.3 Reservation all-or-nothing
 
@@ -272,6 +272,7 @@ Không dùng JUnit. Test sẽ là các Java class executable với assertion th�
 - Reject orphan continuation.
 - Một dòng lỗi không làm dừng các dòng sau.
 - Kiểm tra `rejects.log` có raw line, reason code và timestamp.
+- Kiểm tra parse concurrent vẫn giữ continuation và duplicate order ID deterministic.
 
 ### 10.2 Inventory và reservation
 
@@ -322,6 +323,10 @@ Harness phải:
 - In rõ `PASS` hoặc `FAIL` cho từng invariant và tổng thời gian chạy.
 - Lưu output thật vào `STRESS_TEST_OUTPUT.txt`, không tự tạo hoặc chỉnh sửa kết quả.
 
+### 10.6 Executable regression tests
+
+`CoreBehaviorTest` chạy không cần framework và cover checksum/parser với continuation, reserved flag warning path, duplicate order rejection, unknown SKU rejection, duplicate line atomic rollback và escalation audit exactly once. `DomainSmokeTest` cover value-object validation. Cả hai test có exit code khác 0 khi assertion thất bại.
+
 ## 11. Deliverables sau khi implementation
 
 - Java source theo package/module rõ ràng.
@@ -368,6 +373,6 @@ Kết quả cho thấy reservation không vượt stock, không có duplicate re
 
 ## 16. Implementation status
 
-- Đã hoàn thành domain, parser, inventory locking, atomic reservation, rollback, backorder, RESTOCK, escalation, dead-letter, audit, sample data và stress harness.
+- Đã hoàn thành domain, concurrent logical-block parser, inventory locking, atomic reservation, rollback, backorder, RESTOCK, escalation, dead-letter, audit, sample data và stress harness.
 - Console đã hỗ trợ `STATUS`, `REPORT`, `RESTOCK`, `AUDIT`, `STRESS-TEST` và `EXIT` graceful với thời gian chờ ingestion worker.
 - PDF đề bài chỉ nằm ở local và được loại khỏi Git bằng `.gitignore`.
