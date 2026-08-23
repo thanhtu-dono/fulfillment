@@ -376,6 +376,8 @@ Kết quả cho thấy reservation không vượt stock, không có duplicate re
 - `shipped` được deduplicate theo `OrderId`, nên partial order retry không làm success rate tăng nhiều lần; revenue vẫn cộng theo allocation thực tế.
 - Public `submit()` idempotent theo `OrderId`; concurrent duplicate submissions dùng chung completion result và chỉ một request được reservation.
 - Partial lifecycle giữ pending lines trong backorder entry, dead-letter lines trong fulfillment result và phân biệt `PARTIALLY_SHIPPED` với `SHIPPED` khi retry hoàn tất.
+- `OrderLine.lineNumber` được chuẩn hóa theo vị trí trong order, nên các line có cùng SKU và quantity vẫn được tracking độc lập.
+- Latest `FulfillmentResult` được cập nhật sau mỗi retry; duplicate submit sau backorder nhận được trạng thái mới nhất.
 
 ## 16. Implementation status
 

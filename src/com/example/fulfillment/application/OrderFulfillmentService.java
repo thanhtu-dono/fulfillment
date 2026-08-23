@@ -74,6 +74,12 @@ public final class OrderFulfillmentService implements AutoCloseable {
     }
 
     private FulfillmentResult submitInternal(Order order, boolean initialSubmission, Instant enqueuedAt) {
+        FulfillmentResult result = processSubmission(order, initialSubmission, enqueuedAt);
+        completedResults.put(order.id(), result);
+        return result;
+    }
+
+    private FulfillmentResult processSubmission(Order order, boolean initialSubmission, Instant enqueuedAt) {
         statusCompletion.put(order.id(), new CompletableFuture<>());
         if (acceptedOrderIds.add(order.id())) {
             submitted.increment();
@@ -121,8 +127,9 @@ public final class OrderFulfillmentService implements AutoCloseable {
         var pending = new java.util.ArrayList<OrderLine>();
         var dead = new java.util.ArrayList<DeadLetterLine>();
         for (OrderLine line : order.lines()) {
-            ReservationAttempt attempt = inventory.tryReserve(new Order(order.id(), order.tier(), false,
-                    List.of(line), order.submittedAt(), order.ingestionSequence()));
+                ReservationAttempt attempt = inventory.tryReserve(new Order(order.id(), order.tier(), false,
+                    List.of(new OrderLine(line.sku(), line.quantity(), line.lineNumber())),
+                    order.submittedAt(), order.ingestionSequence()));
             if (attempt.reserved()) {
                 allocations.addAll(attempt.allocations());
                 revenue.add(line.quantity() * attempt.allocations().get(0).unitPrice());

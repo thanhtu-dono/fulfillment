@@ -11,6 +11,7 @@ import com.example.fulfillment.domain.OrderLine;
 import com.example.fulfillment.domain.OrderTier;
 import com.example.fulfillment.domain.Sku;
 import com.example.fulfillment.inventory.InventoryRepository;
+import com.example.fulfillment.inventory.ReservationAttempt;
 import com.example.fulfillment.protocol.Checksum;
 import com.example.fulfillment.protocol.OrderFeedParser;
 import com.example.fulfillment.protocol.ParsedOrder;
@@ -29,7 +30,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 public final class CoreBehaviorTest {
     private static final Sku SKU = new Sku("SKU-TEST");
@@ -45,6 +48,8 @@ public final class CoreBehaviorTest {
         concurrentRestockAndSnapshotCheck();
         shutdownDuringSubmissionsCheck();
         partialAndRestockCheck();
+        lineIdentityAndLatestResultCheck();
+        shutdownDuringReservationCheck();
         escalationAuditCheck();
         System.out.println("CORE_BEHAVIOR_TEST_PASS");
     }
@@ -137,6 +142,30 @@ public final class CoreBehaviorTest {
         }
     }
 
+        private static void lineIdentityAndLatestResultCheck() throws InterruptedException {
+        Sku waitingSku = new Sku("SKU-LINE");
+        InventoryRepository inventory = InventoryRepository.fromSeed(Map.of(
+            new InventoryKey(waitingSku, FulfillmentCenter.FC_EAST), new InventorySeed(1, 10.0),
+            new InventoryKey(waitingSku, FulfillmentCenter.FC_WEST), new InventorySeed(1, 10.0)));
+        OrderFulfillmentService service = new OrderFulfillmentService(inventory, new AuditTrail(),
+            Clock.systemUTC(), 1_000.0);
+        try {
+            Order order = new Order(new OrderId("ORD-000030"), OrderTier.STANDARD, true,
+                List.of(new OrderLine(waitingSku, 2), new OrderLine(waitingSku, 2)), Instant.EPOCH, 30);
+            require(order.lines().get(0).lineNumber() != order.lines().get(1).lineNumber(),
+                "duplicate lines have independent identity");
+            require(service.submit(order).status().name().equals("BACKORDERED"), "multi-line partial backorder");
+            service.restock(waitingSku, FulfillmentCenter.FC_EAST, 1);
+            Thread.sleep(150);
+            service.restock(waitingSku, FulfillmentCenter.FC_WEST, 1);
+            Thread.sleep(150);
+            require(service.submit(order).status().name().equals("SHIPPED"),
+                "duplicate submit returns latest retry result");
+        } finally {
+            service.close();
+        }
+        }
+
     private static void concurrentRestockAndSnapshotCheck() throws Exception {
         InventoryRepository inventory = InventoryRepository.fromSeed(Map.of(
                 new InventoryKey(SKU, FulfillmentCenter.FC_EAST), new InventorySeed(0, 10.0)));
@@ -156,6 +185,61 @@ public final class CoreBehaviorTest {
             require(workers.awaitTermination(5, TimeUnit.SECONDS), "concurrent restock completes");
         }
         require(inventory.companyCapacity(SKU) == 800, "concurrent restock total preserved");
+    }
+
+    private static void shutdownDuringReservationCheck() throws Exception {
+        InventoryRepository delegate = InventoryRepository.fromSeed(Map.of(
+                new InventoryKey(SKU, FulfillmentCenter.FC_EAST), new InventorySeed(1, 10.0)));
+        SlowInventoryRepository inventory = new SlowInventoryRepository(delegate);
+        OrderFulfillmentService service = new OrderFulfillmentService(inventory, new AuditTrail(),
+                Clock.systemUTC(), 1.0);
+        Thread submitter = new Thread(() -> service.submit(order("ORD-000031", OrderTier.STANDARD, 31)),
+                "slow-reservation-test");
+        submitter.start();
+        require(inventory.started.await(2, TimeUnit.SECONDS), "reservation entered before shutdown");
+        service.close();
+        submitter.join(2_000);
+        require(!submitter.isAlive(), "shutdown does not strand in-flight reservation");
+    }
+
+    private static final class SlowInventoryRepository implements InventoryRepository {
+        private final InventoryRepository delegate;
+        private final CountDownLatch started = new CountDownLatch(1);
+
+        private SlowInventoryRepository(InventoryRepository delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public ReservationAttempt tryReserve(Order order) {
+            return tryReserve(order, ignored -> { });
+        }
+
+        @Override
+        public ReservationAttempt tryReserve(Order order, Consumer<ReservationAttempt> completion) {
+            started.countDown();
+            try {
+                Thread.sleep(250);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+            }
+            return delegate.tryReserve(order, completion);
+        }
+
+        @Override
+        public void restock(Sku sku, FulfillmentCenter center, int quantity) {
+            delegate.restock(sku, center, quantity);
+        }
+
+        @Override
+        public int companyCapacity(Sku sku) {
+            return delegate.companyCapacity(sku);
+        }
+
+        @Override
+        public Map<InventoryKey, StockSnapshot> snapshot() {
+            return delegate.snapshot();
+        }
     }
 
     private static void shutdownDuringSubmissionsCheck() throws Exception {

@@ -22,6 +22,12 @@ public record Order(
         if (ingestionSequence < 0) {
             throw new IllegalArgumentException("Ingestion sequence cannot be negative");
         }
-        lines = List.copyOf(lines);
+        List<OrderLine> numberedLines = new java.util.ArrayList<>();
+        for (int index = 0; index < lines.size(); index++) {
+            OrderLine line = lines.get(index);
+            numberedLines.add(line.lineNumber() < 0
+                ? new OrderLine(line.sku(), line.quantity(), index) : line);
+        }
+        lines = List.copyOf(numberedLines);
     }
 }

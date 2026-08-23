@@ -219,7 +219,13 @@ public final class OrderFeedParser {
         }
 
         private ParsedOrder build(long sequence) {
-            return new ParsedOrder(new Order(id, tier, partialAllowed, lines, Instant.now(clock), sequence));
+            List<OrderLine> numberedLines = new ArrayList<>();
+            for (int index = 0; index < lines.size(); index++) {
+                OrderLine line = lines.get(index);
+                numberedLines.add(new OrderLine(line.sku(), line.quantity(), index));
+            }
+            return new ParsedOrder(new Order(id, tier, partialAllowed, numberedLines,
+                    Instant.now(clock), sequence));
         }
     }
 }
