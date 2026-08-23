@@ -31,6 +31,8 @@ public final class OrderFulfillmentService implements AutoCloseable {
     private final Map<OrderId, CompletableFuture<OrderStatus>> statusCompletion = new ConcurrentHashMap<>();
     private final java.util.Set<OrderId> acceptedOrderIds = ConcurrentHashMap.newKeySet();
     private final java.util.Set<OrderId> shippedOrderIds = ConcurrentHashMap.newKeySet();
+    private final Map<OrderId, FulfillmentResult> completedResults = new ConcurrentHashMap<>();
+    private final Map<OrderId, CompletableFuture<FulfillmentResult>> submissions = new ConcurrentHashMap<>();
     private final DoubleAdder revenue = new DoubleAdder();
     private final LongAdder shipped = new LongAdder();
     private final LongAdder submitted = new LongAdder();
@@ -49,7 +51,26 @@ public final class OrderFulfillmentService implements AutoCloseable {
     }
 
     public FulfillmentResult submit(Order order) {
-        return submitInternal(order, true, Instant.now(clock));
+        FulfillmentResult completed = completedResults.get(order.id());
+        if (completed != null) {
+            return completed;
+        }
+        CompletableFuture<FulfillmentResult> ownSubmission = new CompletableFuture<>();
+        CompletableFuture<FulfillmentResult> active = submissions.putIfAbsent(order.id(), ownSubmission);
+        if (active != null) {
+            return active.join();
+        }
+        try {
+            FulfillmentResult result = submitInternal(order, true, Instant.now(clock));
+            completedResults.put(order.id(), result);
+            ownSubmission.complete(result);
+            return result;
+        } catch (RuntimeException exception) {
+            ownSubmission.completeExceptionally(exception);
+            throw exception;
+        } finally {
+            submissions.remove(order.id(), ownSubmission);
+        }
     }
 
     private FulfillmentResult submitInternal(Order order, boolean initialSubmission, Instant enqueuedAt) {
@@ -61,13 +82,16 @@ public final class OrderFulfillmentService implements AutoCloseable {
             statuses.put(order.id(), OrderStatus.RECEIVED);
             audit(order, AuditEventType.ORDER_ACCEPTED, "Order accepted");
         }
-        ReservationAttempt attempt = inventory.tryReserve(order);
+        ReservationAttempt attempt = inventory.tryReserve(order, reservation -> {
+            if (reservation.reserved()) {
+                finishStatus(order.id(), OrderStatus.SHIPPED);
+            }
+        });
         if (attempt.reserved()) {
             double orderRevenue = attempt.allocations().stream()
                     .mapToDouble(allocation -> allocation.line().quantity() * allocation.unitPrice()).sum();
             revenue.add(orderRevenue);
             recordShipped(order.id());
-            finishStatus(order.id(), OrderStatus.SHIPPED);
             audit(order, AuditEventType.RESERVATION_SUCCEEDED, "Reservation succeeded");
             audit(order, AuditEventType.ORDER_SHIPPED, "Order shipped");
             return new FulfillmentResult(OrderStatus.SHIPPED, attempt.allocations(), List.of(), List.of());
@@ -112,7 +136,8 @@ public final class OrderFulfillmentService implements AutoCloseable {
         if (!pending.isEmpty()) {
                 backorders.enqueue(new Order(order.id(), order.tier(), true, pending,
                         order.submittedAt(), order.ingestionSequence()), originalEnqueuedAt);
-            finishStatus(order.id(), OrderStatus.BACKORDERED);
+                finishStatus(order.id(), allocations.isEmpty()
+                    ? OrderStatus.BACKORDERED : OrderStatus.PARTIALLY_SHIPPED);
             audit(order, AuditEventType.ORDER_BACKORDERED, "Some lines backordered");
         } else {
             finishStatus(order.id(), allocations.isEmpty() ? OrderStatus.DEAD_LETTERED : OrderStatus.SHIPPED);

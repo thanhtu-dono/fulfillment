@@ -7,9 +7,11 @@ import com.example.fulfillment.domain.Sku;
 import com.example.fulfillment.protocol.InventorySeedReader.InventorySeed;
 
 import java.util.Map;
+import java.util.function.Consumer;
 
 public interface InventoryRepository {
     ReservationAttempt tryReserve(Order order);
+    ReservationAttempt tryReserve(Order order, Consumer<ReservationAttempt> completion);
     void restock(Sku sku, FulfillmentCenter center, int quantity);
     int companyCapacity(Sku sku);
     Map<InventoryKey, StockSnapshot> snapshot();

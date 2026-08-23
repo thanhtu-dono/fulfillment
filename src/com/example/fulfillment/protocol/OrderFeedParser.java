@@ -111,6 +111,9 @@ public final class OrderFeedParser {
     private ParsedOrder parseBlock(List<String> block, long sequence) throws Exception {
         OrderBuilder current = parseHeader(block.get(0));
         if (current == null) {
+            for (int index = 1; index < block.size(); index++) {
+                reject(block.get(index), RejectReason.ORPHAN_CONTINUATION);
+            }
             return null;
         }
         for (int index = 1; index < block.size(); index++) {

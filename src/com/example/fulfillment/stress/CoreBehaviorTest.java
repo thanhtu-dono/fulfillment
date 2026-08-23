@@ -27,6 +27,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public final class CoreBehaviorTest {
     private static final Sku SKU = new Sku("SKU-TEST");
@@ -36,7 +38,9 @@ public final class CoreBehaviorTest {
 
     public static void main(String[] args) throws Exception {
         parserChecks();
+        malformedHeaderContinuationCheck();
         duplicateLineRollbackCheck();
+        concurrentDuplicateSubmitCheck();
         partialAndRestockCheck();
         escalationAuditCheck();
         System.out.println("CORE_BEHAVIOR_TEST_PASS");
@@ -76,6 +80,41 @@ public final class CoreBehaviorTest {
         require(!inventory.tryReserve(order).reserved(), "duplicate lines must fail atomically");
         require(inventory.companyCapacity(SKU) == 5, "failed reservation must not deduct stock");
     }
+
+        private static void malformedHeaderContinuationCheck() throws Exception {
+        Path rejects = Files.createTempFile("malformed-continuation", ".log");
+        try (RejectWriter writer = new RejectWriter(rejects)) {
+            OrderFeedParser parser = new OrderFeedParser(Set.of(SKU), writer,
+                Clock.fixed(Instant.EPOCH, ZoneOffset.UTC));
+            parser.parseConcurrently(List.of(
+                withChecksum("O|ORD-000020|BAD|--|SKU-TESTx1"),
+                withChecksum("C|ORD-000020|SKU-TESTx1")), 4, ignored -> { });
+            require(Files.readAllLines(rejects).stream().anyMatch(line -> line.contains("ORPHAN_CONTINUATION")),
+                "continuation after malformed header rejected");
+        } finally {
+            Files.deleteIfExists(rejects);
+        }
+        }
+
+        private static void concurrentDuplicateSubmitCheck() throws Exception {
+        InventoryRepository inventory = InventoryRepository.fromSeed(Map.of(
+            new InventoryKey(SKU, FulfillmentCenter.FC_EAST), new InventorySeed(1, 10.0)));
+        OrderFulfillmentService service = new OrderFulfillmentService(inventory, new AuditTrail(),
+            Clock.systemUTC(), 1.0);
+        ExecutorService workers = Executors.newFixedThreadPool(2);
+        try {
+            Order order = new Order(new OrderId("ORD-000021"), OrderTier.STANDARD, false,
+                List.of(new OrderLine(SKU, 1)), Instant.EPOCH, 21);
+            var first = workers.submit(() -> service.submit(order));
+            var second = workers.submit(() -> service.submit(order));
+            require(first.get().status() == second.get().status(), "duplicate submissions share result");
+            require(service.shippedCount() == 1 && inventory.companyCapacity(SKU) == 0,
+                "duplicate submissions reserve once");
+        } finally {
+            workers.shutdownNow();
+            service.close();
+        }
+        }
 
     private static void escalationAuditCheck() throws InterruptedException {
         InventoryRepository inventory = InventoryRepository.fromSeed(Map.of(

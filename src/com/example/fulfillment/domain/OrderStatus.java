@@ -4,6 +4,7 @@ public enum OrderStatus {
     RECEIVED,
     RESERVED,
     BACKORDERED,
+    PARTIALLY_SHIPPED,
     ESCALATED,
     DEAD_LETTERED,
     SHIPPED,

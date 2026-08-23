@@ -15,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -31,6 +32,11 @@ public final class InMemoryInventoryRepository implements InventoryRepository {
 
     @Override
     public ReservationAttempt tryReserve(Order order) {
+        return tryReserve(order, attempt -> { });
+    }
+
+    @Override
+    public ReservationAttempt tryReserve(Order order, Consumer<ReservationAttempt> completion) {
         List<AllocationPlan> selected = selectCenters(order.lines());
         if (selected == null) {
             return ReservationAttempt.failed();
@@ -45,7 +51,9 @@ public final class InMemoryInventoryRepository implements InventoryRepository {
             for (InventoryKey key : keys) {
                 ReentrantLock lock = locks.get(key);
                 if (lock == null) {
-                    return ReservationAttempt.failed();
+                    ReservationAttempt failed = ReservationAttempt.failed();
+                    completion.accept(failed);
+                    return failed;
                 }
                 lock.lock();
                 acquired.add(lock);
@@ -56,7 +64,9 @@ public final class InMemoryInventoryRepository implements InventoryRepository {
             }
             for (Map.Entry<InventoryKey, Integer> demand : demandByKey.entrySet()) {
                 if (stockByKey.get(demand.getKey()).quantity < demand.getValue()) {
-                    return ReservationAttempt.failed();
+                    ReservationAttempt failed = ReservationAttempt.failed();
+                    completion.accept(failed);
+                    return failed;
                 }
             }
             List<ReservationAllocation> allocations = new ArrayList<>();
@@ -65,7 +75,9 @@ public final class InMemoryInventoryRepository implements InventoryRepository {
                 stock.quantity -= plan.line().quantity();
                 allocations.add(new ReservationAllocation(plan.line(), plan.key().center(), stock.unitPrice));
             }
-            return new ReservationAttempt(true, allocations);
+            ReservationAttempt successful = new ReservationAttempt(true, allocations);
+            completion.accept(successful);
+            return successful;
         } finally {
             for (int index = acquired.size() - 1; index >= 0; index--) {
                 acquired.get(index).unlock();

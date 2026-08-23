@@ -121,6 +121,11 @@ public final class BackorderService implements AutoCloseable {
         running.set(false);
         if (worker != null) {
             worker.interrupt();
+            try {
+                worker.join(2_000);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 }

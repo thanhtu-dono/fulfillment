@@ -325,7 +325,7 @@ Harness phải:
 
 ### 10.6 Executable regression tests
 
-`CoreBehaviorTest` chạy không cần framework và cover checksum/parser với continuation, reserved flag warning path, duplicate order rejection, unknown SKU rejection, duplicate line atomic rollback, partial fulfillment, dead-letter, RESTOCK retry và automatic escalation audit exactly once. `DomainSmokeTest` cover value-object validation. Cả hai test có exit code khác 0 khi assertion thất bại.
+`CoreBehaviorTest` chạy không cần framework và cover checksum/parser với continuation, reserved flag warning path, duplicate order rejection, unknown SKU rejection, malformed-header continuation, duplicate line atomic rollback, partial fulfillment, dead-letter, RESTOCK retry, concurrent duplicate submit và automatic escalation audit exactly once. `DomainSmokeTest` cover value-object validation. Cả hai test có exit code khác 0 khi assertion thất bại.
 
 ## 11. Deliverables sau khi implementation
 
@@ -372,6 +372,7 @@ Kết quả cho thấy reservation không vượt stock, không có duplicate re
 - Có thể thay `double` bằng integer cents để loại bỏ sai số floating-point khi tính revenue.
 - Status observers chờ completion future theo từng reservation attempt, nên không đọc trạng thái cũ trong lúc inventory operation đang hoàn tất; inventory vẫn dùng fine-grained locks thay vì global lock.
 - `shipped` được deduplicate theo `OrderId`, nên partial order retry không làm success rate tăng nhiều lần; revenue vẫn cộng theo allocation thực tế.
+- Public `submit()` idempotent theo `OrderId`; concurrent duplicate submissions dùng chung completion result và chỉ một request được reservation.
 
 ## 16. Implementation status
 
