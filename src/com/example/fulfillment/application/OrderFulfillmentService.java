@@ -40,17 +40,18 @@ public final class OrderFulfillmentService implements AutoCloseable {
         this.inventory = inventory;
         this.auditTrail = auditTrail;
         this.clock = clock;
-        this.backorders = new BackorderService(clock, timeScale, order -> submitInternal(order, false),
+        this.backorders = new BackorderService(clock, timeScale,
+            entry -> submitInternal(entry.order(), false, entry.enqueuedAt()),
             order -> audit(order, AuditEventType.ORDER_ESCALATED,
                 "Standard order escalated to priority"));
         this.backorders.start();
     }
 
     public FulfillmentResult submit(Order order) {
-        return submitInternal(order, true);
+        return submitInternal(order, true, Instant.now(clock));
     }
 
-    private FulfillmentResult submitInternal(Order order, boolean initialSubmission) {
+    private FulfillmentResult submitInternal(Order order, boolean initialSubmission, Instant enqueuedAt) {
         statusCompletion.put(order.id(), new CompletableFuture<>());
         if (acceptedOrderIds.add(order.id())) {
             submitted.increment();
@@ -82,15 +83,15 @@ public final class OrderFulfillmentService implements AutoCloseable {
                 }
             }
             finishStatus(order.id(), OrderStatus.BACKORDERED);
-            backorders.enqueue(order);
+            backorders.enqueue(order, enqueuedAt);
             audit(order, AuditEventType.RESERVATION_ROLLED_BACK, "Reservation rolled back");
             audit(order, AuditEventType.ORDER_BACKORDERED, "Order backordered");
             return new FulfillmentResult(OrderStatus.BACKORDERED, List.of(), order.lines(), List.of());
         }
-        return processPartial(order);
+        return processPartial(order, enqueuedAt);
     }
 
-    private FulfillmentResult processPartial(Order order) {
+    private FulfillmentResult processPartial(Order order, Instant originalEnqueuedAt) {
         var allocations = new java.util.ArrayList<com.example.fulfillment.domain.ReservationAllocation>();
         var pending = new java.util.ArrayList<OrderLine>();
         var dead = new java.util.ArrayList<DeadLetterLine>();
@@ -108,8 +109,8 @@ public final class OrderFulfillmentService implements AutoCloseable {
             }
         }
         if (!pending.isEmpty()) {
-            backorders.enqueue(new Order(order.id(), order.tier(), true, pending,
-                    order.submittedAt(), order.ingestionSequence()));
+                backorders.enqueue(new Order(order.id(), order.tier(), true, pending,
+                        order.submittedAt(), order.ingestionSequence()), originalEnqueuedAt);
             finishStatus(order.id(), OrderStatus.BACKORDERED);
             audit(order, AuditEventType.ORDER_BACKORDERED, "Some lines backordered");
         } else {
@@ -128,7 +129,6 @@ public final class OrderFulfillmentService implements AutoCloseable {
         auditTrail.append(new AuditEvent(Instant.now(clock), null, AuditEventType.RESTOCK_APPLIED,
                 sku + " at " + center + " +" + quantity));
         backorders.signalRestock();
-        backorders.processNow();
     }
 
     public InventoryRepository inventory() { return inventory; }

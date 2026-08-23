@@ -8,6 +8,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.concurrent.PriorityBlockingQueue;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -16,13 +18,14 @@ public final class BackorderService implements AutoCloseable {
     private final PriorityBlockingQueue<BackorderEntry> queue = new PriorityBlockingQueue<>(32, comparator());
     private final AtomicLong sequence = new AtomicLong();
     private final AtomicBoolean running = new AtomicBoolean();
+    private final Semaphore restockSignals = new Semaphore(0);
     private final Clock clock;
     private final double timeScale;
-    private final Consumer<Order> processor;
+    private final Consumer<BackorderEntry> processor;
     private final Consumer<Order> escalationListener;
     private Thread worker;
 
-    public BackorderService(Clock clock, double timeScale, Consumer<Order> processor,
+    public BackorderService(Clock clock, double timeScale, Consumer<BackorderEntry> processor,
                             Consumer<Order> escalationListener) {
         if (timeScale <= 0) {
             throw new IllegalArgumentException("Time scale must be positive");
@@ -42,12 +45,16 @@ public final class BackorderService implements AutoCloseable {
     }
 
     public void enqueue(Order order) {
-        queue.offer(new BackorderEntry(order, Instant.now(clock), sequence.getAndIncrement()));
+        enqueue(order, Instant.now(clock));
+    }
+
+    public void enqueue(Order order, Instant enqueuedAt) {
+        queue.offer(new BackorderEntry(order, enqueuedAt, sequence.getAndIncrement()));
     }
 
     public void signalRestock() {
         if (running.get()) {
-            Thread.yield();
+            restockSignals.release();
         }
     }
 
@@ -62,7 +69,7 @@ public final class BackorderService implements AutoCloseable {
             if (entry == null) {
                 return;
             }
-            processor.accept(entry.order());
+            processor.accept(entry);
         }
     }
 
@@ -70,7 +77,9 @@ public final class BackorderService implements AutoCloseable {
         while (running.get()) {
             escalateEligible(escalationListener);
             try {
-                Thread.sleep(100);
+                if (restockSignals.tryAcquire(100, TimeUnit.MILLISECONDS)) {
+                    processNow();
+                }
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
                 return;

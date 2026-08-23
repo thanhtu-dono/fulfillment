@@ -95,7 +95,7 @@ public final class CoreBehaviorTest {
         }
     }
 
-    private static void partialAndRestockCheck() {
+    private static void partialAndRestockCheck() throws InterruptedException {
         Sku secondSku = new Sku("SKU-SECOND");
         Sku waitingSku = new Sku("SKU-WAITING");
         InventoryRepository inventory = InventoryRepository.fromSeed(Map.of(
@@ -114,6 +114,7 @@ public final class CoreBehaviorTest {
             Order waiting = order("ORD-000014", OrderTier.STANDARD, 14, waitingSku);
             require(service.submit(waiting).status().name().equals("BACKORDERED"), "temporary shortage backordered");
             service.restock(waitingSku, FulfillmentCenter.FC_EAST, 1);
+            Thread.sleep(150);
             require(service.status(new OrderId("ORD-000014")).name().equals("SHIPPED"), "restock retries order");
         } finally {
             service.close();

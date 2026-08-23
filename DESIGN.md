@@ -239,7 +239,7 @@ Quyết định terminal: dead-letter line item không tự revive sau RESTOCK. 
 
 - Order thiếu stock nhưng còn khả năng fulfill được enqueue với original submission timestamp.
 - RESTOCK phát signal, worker đánh thức và retry queue mà không chặn ingestion.
-- Daemon worker định kỳ kiểm tra escalation; RESTOCK kích hoạt reprocess queue. Worker dùng priority queue: `PRIORITY` trước, sau đó original timestamp, rồi sequence number.
+- Daemon worker định kỳ kiểm tra escalation; RESTOCK phát signal qua `Semaphore` để daemon reprocess queue mà không chặn console caller. Worker dùng priority queue: `PRIORITY` trước, sau đó original timestamp, rồi sequence number.
 - Standard order chờ quá 90 simulated seconds và có priority order đang chờ sẽ escalate.
 - Tie-break escalation: original submission timestamp tăng dần; nếu bằng nhau dùng immutable ingestion sequence tăng dần.
 - Escalation và dequeue được thực hiện trong một lock của backorder service để tránh xử lý hai lần.
@@ -367,7 +367,7 @@ Kết quả cho thấy reservation không vượt stock, không có duplicate re
 
 - Parser hiện phân đoạn logical order tuần tự trước khi phân phối block cho 4 worker; có thể cải tiến thành pipeline reader/parser worker nhưng vẫn phải giữ thứ tự continuation.
 - `REPORT` và audit hiện là in-memory, chưa có persistence hoặc rotation cho log dài hạn.
-- Partial fulfillment hiện quản lý pending line ở mức order retry; chưa có màn hình chi tiết line-level cho console.
+- Partial fulfillment quản lý pending line ở mức order retry; chưa có màn hình chi tiết line-level cho console.
 - Có thể bổ sung test runner duy nhất để chạy toàn bộ unit-style checks thay vì gọi từng class test riêng.
 - Có thể thay `double` bằng integer cents để loại bỏ sai số floating-point khi tính revenue.
 - Status observers chờ completion future theo từng reservation attempt, nên không đọc trạng thái cũ trong lúc inventory operation đang hoàn tất; inventory vẫn dùng fine-grained locks thay vì global lock.
