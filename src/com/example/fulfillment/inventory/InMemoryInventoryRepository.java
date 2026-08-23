@@ -114,17 +114,23 @@ public final class InMemoryInventoryRepository implements InventoryRepository {
 
     @Override
     public int companyCapacity(Sku sku) {
-        return stockByKey.entrySet().stream()
-                .filter(entry -> entry.getKey().sku().equals(sku))
-                .mapToInt(entry -> {
-                    ReentrantLock lock = locks.get(entry.getKey());
-                    lock.lock();
-                    try {
-                        return entry.getValue().quantity;
-                    } finally {
-                        lock.unlock();
-                    }
-                }).sum();
+        List<InventoryKey> keys = stockByKey.keySet().stream()
+                .filter(key -> key.sku().equals(sku))
+                .sorted()
+                .toList();
+        List<ReentrantLock> acquired = new ArrayList<>();
+        try {
+            for (InventoryKey key : keys) {
+                ReentrantLock lock = locks.get(key);
+                lock.lock();
+                acquired.add(lock);
+            }
+            return keys.stream().mapToInt(key -> stockByKey.get(key).quantity).sum();
+        } finally {
+            for (int index = acquired.size() - 1; index >= 0; index--) {
+                acquired.get(index).unlock();
+            }
+        }
     }
 
     @Override
