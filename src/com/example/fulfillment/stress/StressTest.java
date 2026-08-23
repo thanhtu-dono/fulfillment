@@ -83,7 +83,13 @@ public final class StressTest {
                     .collect(Collectors.toSet());
                 long escalationEvents = audit.all().stream()
                     .filter(event -> event.type() == AuditEventType.ORDER_ESCALATED).count();
-                boolean escalationExactlyOnce = escalationEvents == escalationIds.size() && !escalationIds.isEmpty();
+                    Set<String> standardBackorderIds = audit.all().stream()
+                        .filter(event -> event.type() == AuditEventType.ORDER_BACKORDERED
+                            && event.orderId().value().compareTo("ORD-000102") >= 0)
+                        .map(event -> event.orderId().value())
+                        .collect(Collectors.toSet());
+                    boolean escalationExactlyOnce = escalationEvents == escalationIds.size()
+                        && !escalationIds.isEmpty() && escalationIds.equals(standardBackorderIds);
             System.out.println("STRESS-TEST");
             System.out.println("orders=" + ORDERS + " threads=" + THREADS + " demand=10000 startingStock=100");
             System.out.println("PASS reservedWithinStock=" + (reserved <= 100));

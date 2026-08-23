@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public final class CoreBehaviorTest {
     private static final Sku SKU = new Sku("SKU-TEST");
@@ -41,6 +42,8 @@ public final class CoreBehaviorTest {
         malformedHeaderContinuationCheck();
         duplicateLineRollbackCheck();
         concurrentDuplicateSubmitCheck();
+        concurrentRestockAndSnapshotCheck();
+        shutdownDuringSubmissionsCheck();
         partialAndRestockCheck();
         escalationAuditCheck();
         System.out.println("CORE_BEHAVIOR_TEST_PASS");
@@ -132,6 +135,43 @@ public final class CoreBehaviorTest {
         } finally {
             service.close();
         }
+    }
+
+    private static void concurrentRestockAndSnapshotCheck() throws Exception {
+        InventoryRepository inventory = InventoryRepository.fromSeed(Map.of(
+                new InventoryKey(SKU, FulfillmentCenter.FC_EAST), new InventorySeed(0, 10.0)));
+        ExecutorService workers = Executors.newFixedThreadPool(8);
+        try {
+            for (int worker = 0; worker < 8; worker++) {
+                workers.submit(() -> {
+                    for (int index = 0; index < 100; index++) {
+                        inventory.restock(SKU, FulfillmentCenter.FC_EAST, 1);
+                        require(inventory.snapshot().values().stream().allMatch(stock -> stock.quantity() >= 0),
+                                "concurrent snapshot never negative");
+                    }
+                });
+            }
+        } finally {
+            workers.shutdown();
+            require(workers.awaitTermination(5, TimeUnit.SECONDS), "concurrent restock completes");
+        }
+        require(inventory.companyCapacity(SKU) == 800, "concurrent restock total preserved");
+    }
+
+    private static void shutdownDuringSubmissionsCheck() throws Exception {
+        InventoryRepository inventory = InventoryRepository.fromSeed(Map.of(
+                new InventoryKey(SKU, FulfillmentCenter.FC_EAST), new InventorySeed(50, 10.0)));
+        OrderFulfillmentService service = new OrderFulfillmentService(inventory, new AuditTrail(),
+                Clock.systemUTC(), 1.0);
+        ExecutorService workers = Executors.newFixedThreadPool(4);
+        for (int index = 0; index < 100; index++) {
+            int orderNumber = index;
+            workers.submit(() -> service.submit(new Order(new OrderId(String.format("ORD-%06d", 900000 + orderNumber)),
+                    OrderTier.STANDARD, false, List.of(new OrderLine(SKU, 1)), Instant.now(), orderNumber)));
+        }
+        service.close();
+        workers.shutdown();
+        require(workers.awaitTermination(5, TimeUnit.SECONDS), "shutdown does not strand submitters");
     }
 
     private static void partialAndRestockCheck() throws InterruptedException {
