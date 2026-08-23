@@ -370,7 +370,7 @@ Kết quả cho thấy reservation không vượt stock, không có duplicate re
 - Partial fulfillment hiện quản lý pending line ở mức order retry; chưa có màn hình chi tiết line-level cho console.
 - Có thể bổ sung test runner duy nhất để chạy toàn bộ unit-style checks thay vì gọi từng class test riêng.
 - Có thể thay `double` bằng integer cents để loại bỏ sai số floating-point khi tính revenue.
-- Atomic visibility giữa inventory deduction và status publication hiện được bảo vệ ở application flow, nhưng chưa có một transaction snapshot API cho observer đọc cả hai trong cùng operation; bước tiếp theo là thêm transaction boundary hoặc completion future cho status read.
+- Status observers chờ completion future theo từng reservation attempt, nên không đọc trạng thái cũ trong lúc inventory operation đang hoàn tất; inventory vẫn dùng fine-grained locks thay vì global lock.
 
 ## 16. Implementation status
 

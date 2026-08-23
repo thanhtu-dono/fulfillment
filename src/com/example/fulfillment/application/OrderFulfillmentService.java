@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.DoubleAdder;
 import java.util.concurrent.atomic.LongAdder;
 
@@ -27,6 +28,7 @@ public final class OrderFulfillmentService implements AutoCloseable {
     private final Clock clock;
     private final BackorderService backorders;
     private final Map<OrderId, OrderStatus> statuses = new ConcurrentHashMap<>();
+    private final Map<OrderId, CompletableFuture<OrderStatus>> statusCompletion = new ConcurrentHashMap<>();
     private final java.util.Set<OrderId> acceptedOrderIds = ConcurrentHashMap.newKeySet();
     private final DoubleAdder revenue = new DoubleAdder();
     private final LongAdder shipped = new LongAdder();
@@ -49,6 +51,7 @@ public final class OrderFulfillmentService implements AutoCloseable {
     }
 
     private FulfillmentResult submitInternal(Order order, boolean initialSubmission) {
+        statusCompletion.put(order.id(), new CompletableFuture<>());
         if (acceptedOrderIds.add(order.id())) {
             submitted.increment();
         }
@@ -62,7 +65,7 @@ public final class OrderFulfillmentService implements AutoCloseable {
                     .mapToDouble(allocation -> allocation.line().quantity() * allocation.unitPrice()).sum();
             revenue.add(orderRevenue);
             shipped.increment();
-            statuses.put(order.id(), OrderStatus.SHIPPED);
+            finishStatus(order.id(), OrderStatus.SHIPPED);
             audit(order, AuditEventType.RESERVATION_SUCCEEDED, "Reservation succeeded");
             audit(order, AuditEventType.ORDER_SHIPPED, "Order shipped");
             return new FulfillmentResult(OrderStatus.SHIPPED, attempt.allocations(), List.of(), List.of());
@@ -70,7 +73,7 @@ public final class OrderFulfillmentService implements AutoCloseable {
         if (!order.partialAllowed()) {
             for (OrderLine line : order.lines()) {
                 if (line.quantity() > inventory.companyCapacity(line.sku())) {
-                    statuses.put(order.id(), OrderStatus.DEAD_LETTERED);
+                    finishStatus(order.id(), OrderStatus.DEAD_LETTERED);
                     deadLettered.increment();
                     audit(order, AuditEventType.ORDER_DEAD_LETTERED, "Quantity exceeds company capacity");
                     return new FulfillmentResult(OrderStatus.DEAD_LETTERED, List.of(), List.of(),
@@ -78,7 +81,7 @@ public final class OrderFulfillmentService implements AutoCloseable {
                                     "EXCEEDS_COMPANY_CAPACITY", Instant.now(clock))).toList());
                 }
             }
-            statuses.put(order.id(), OrderStatus.BACKORDERED);
+            finishStatus(order.id(), OrderStatus.BACKORDERED);
             backorders.enqueue(order);
             audit(order, AuditEventType.RESERVATION_ROLLED_BACK, "Reservation rolled back");
             audit(order, AuditEventType.ORDER_BACKORDERED, "Order backordered");
@@ -107,10 +110,10 @@ public final class OrderFulfillmentService implements AutoCloseable {
         if (!pending.isEmpty()) {
             backorders.enqueue(new Order(order.id(), order.tier(), true, pending,
                     order.submittedAt(), order.ingestionSequence()));
-            statuses.put(order.id(), OrderStatus.BACKORDERED);
+            finishStatus(order.id(), OrderStatus.BACKORDERED);
             audit(order, AuditEventType.ORDER_BACKORDERED, "Some lines backordered");
         } else {
-            statuses.put(order.id(), allocations.isEmpty() ? OrderStatus.DEAD_LETTERED : OrderStatus.SHIPPED);
+            finishStatus(order.id(), allocations.isEmpty() ? OrderStatus.DEAD_LETTERED : OrderStatus.SHIPPED);
         }
         if (!allocations.isEmpty()) {
             shipped.increment();
@@ -137,7 +140,21 @@ public final class OrderFulfillmentService implements AutoCloseable {
     public long submittedCount() { return submitted.sum(); }
         public int escalateBackorders() { return backorders.escalateEligible(order -> audit(order,
             AuditEventType.ORDER_ESCALATED, "Standard order escalated to priority")); }
-    public OrderStatus status(OrderId orderId) { return statuses.get(orderId); }
+    public OrderStatus status(OrderId orderId) {
+        CompletableFuture<OrderStatus> completion = statusCompletion.get(orderId);
+        if (completion != null) {
+            completion.join();
+        }
+        return statuses.get(orderId);
+    }
+
+    private void finishStatus(OrderId orderId, OrderStatus status) {
+        statuses.put(orderId, status);
+        CompletableFuture<OrderStatus> completion = statusCompletion.get(orderId);
+        if (completion != null) {
+            completion.complete(status);
+        }
+    }
 
     private void audit(Order order, AuditEventType type, String message) {
         auditTrail.append(new AuditEvent(Instant.now(clock), order.id(), type, message));
