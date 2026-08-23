@@ -1,0 +1,12 @@
+package com.example.fulfillment.audit;
+
+public enum AuditEventType {
+    ORDER_ACCEPTED,
+    RESERVATION_SUCCEEDED,
+    RESERVATION_ROLLED_BACK,
+    ORDER_BACKORDERED,
+    ORDER_ESCALATED,
+    ORDER_DEAD_LETTERED,
+    RESTOCK_APPLIED,
+    ORDER_SHIPPED
+}

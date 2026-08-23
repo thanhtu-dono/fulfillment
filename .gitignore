@@ -1,0 +1,7 @@
+# Build output
+out/
+*.class
+
+# Assignment input artifact kept local
+Order_Fulfillment_Engine_Home_Assignment.pdf
+
