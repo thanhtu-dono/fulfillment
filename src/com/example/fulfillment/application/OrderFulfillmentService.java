@@ -129,6 +129,8 @@ public final class OrderFulfillmentService implements AutoCloseable {
             } else if (line.quantity() > inventory.companyCapacity(line.sku())) {
                 dead.add(new DeadLetterLine(line, "EXCEEDS_COMPANY_CAPACITY", Instant.now(clock)));
                 deadLettered.increment();
+                audit(order, AuditEventType.ORDER_DEAD_LETTERED,
+                        "Line exceeds company capacity: " + line.sku());
             } else {
                 pending.add(line);
             }
