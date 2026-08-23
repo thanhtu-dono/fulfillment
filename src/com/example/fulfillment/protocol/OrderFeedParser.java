@@ -24,12 +24,19 @@ public final class OrderFeedParser {
     private final Set<Sku> knownSkus;
     private final RejectWriter rejectWriter;
     private final Clock clock;
+    private final Consumer<String> warningWriter;
     private final Set<String> seenOrderIds = new HashSet<>();
 
     public OrderFeedParser(Set<Sku> knownSkus, RejectWriter rejectWriter, Clock clock) {
+        this(knownSkus, rejectWriter, clock, message -> { });
+    }
+
+    public OrderFeedParser(Set<Sku> knownSkus, RejectWriter rejectWriter,
+                           Clock clock, Consumer<String> warningWriter) {
         this.knownSkus = Set.copyOf(knownSkus);
         this.rejectWriter = rejectWriter;
         this.clock = clock;
+        this.warningWriter = warningWriter;
     }
 
     public void parse(List<String> lines, Consumer<ParsedOrder> consumer) throws Exception {
@@ -143,6 +150,10 @@ public final class OrderFeedParser {
         if (!seenOrderIds.add(fields[1])) {
             reject(line, RejectReason.DUPLICATE_ORDER_ID);
             return null;
+        }
+        if (fields[3].charAt(1) != '-') {
+            warningWriter.accept("WARNING: reserved OFP flag '" + fields[3].charAt(1)
+                    + "' treated as '-': " + line);
         }
         List<OrderLine> items = parseItems(line, fields[4]);
         if (items == null || items.size() > 4) {

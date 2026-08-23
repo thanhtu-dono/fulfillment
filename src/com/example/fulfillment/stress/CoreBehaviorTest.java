@@ -46,7 +46,8 @@ public final class CoreBehaviorTest {
         List<RejectRecord> records = new ArrayList<>();
         try (RejectWriter writer = new RejectWriter(rejects)) {
             OrderFeedParser parser = new OrderFeedParser(Set.of(SKU), writer,
-                    Clock.fixed(Instant.EPOCH, ZoneOffset.UTC));
+                    Clock.fixed(Instant.EPOCH, ZoneOffset.UTC), message -> require(
+                        message.startsWith("WARNING:"), "reserved flag warning"));
             List<ParsedOrder> orders = new ArrayList<>();
             parser.parseConcurrently(List.of(
                     withChecksum("O|ORD-000001|STD|PX|SKU-TESTx1"),

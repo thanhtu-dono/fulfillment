@@ -37,7 +37,8 @@ public final class Main {
              OrderFulfillmentService service = new OrderFulfillmentService(inventory, auditTrail,
                      Clock.systemUTC(), 1.0)) {
             Set<Sku> knownSkus = seed.keySet().stream().map(key -> key.sku()).collect(java.util.stream.Collectors.toSet());
-            OrderFeedParser parser = new OrderFeedParser(knownSkus, rejectWriter, Clock.systemUTC());
+                OrderFeedParser parser = new OrderFeedParser(knownSkus, rejectWriter, Clock.systemUTC(),
+                    System.out::println);
             List<ParsedOrder> parsedOrders = new java.util.ArrayList<>();
                 parser.parseConcurrently(Files.readAllLines(workingDirectory.resolve("order_feed.txt")), 4,
                     parsedOrders::add);
